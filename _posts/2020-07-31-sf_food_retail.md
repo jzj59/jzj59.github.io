@@ -4,6 +4,37 @@ title: "SF Food Access"
 tags: research
 ---
 
+A good friend of mine is in the public health sector focusing on food
+and nutrition policy, specifically focusing on access and equity for
+farmer’s markets. I’ve learned a lot from her around the patterns and
+trends associated with farmer’s markets in California. There’s a
+normative aspect to her work: a belief that localizing supply chains and
+connecting farmers directly with consumers is going to be a key go
+forward strategy for both environmentalism *and* food access. One of her
+research programs right now is focused on understanding the barriers
+discouraging Black communities from patronizing these markets to the
+same levels that other communities in California do. There’s the obvious
+factor of price; yet it doesn’t fully explain the consumption patterns
+as there are definitely lower price point markets that working class
+immigrant enclaves heavily rely on. In addition to price then, maybe
+there’s a secondary factor of proximity. Regardless, it seems like
+wrapped up in this is just larger questions around food access for poor
+Black communities in America, a topic that I’m not even close to
+understanding enough to be able to have a proper discussion about.
+
+As part of building out my general knowledge there, I’ve been reading
+some papers around the discriminatory aspects of food access in America.
+In parallel, I decided to take a look at the data itself, specifically
+San Francisco. Fortunately, the SF City Government has open sourced a
+lot of interesting datasets, with one being a collection of **all**
+registered business in the city (including grocery stores and markets!).
+Below, I document my efforts in exploring this dataset and understanding
+a bit more about the trends of food and grocery retail in San Francisco.
+
+Pretty much my default package list for any analysis leveraging public
+data. (If I’m querying a database for work, I’ll be looking more towards
+database clients such as `RPostgresql`)
+
     library(tidyr)
     library(dplyr)
     library(ggplot2)
@@ -16,16 +47,35 @@ tags: research
 
     # https://data.sfgov.org/Economy-and-Community/Registered-Business-Locations-San-Francisco/g8m3-pdis
 
+The SF gov has a nicely maintained public API for accessing datasets.
+You can also just download a csv and read it in manually, but I thought
+I’d be fancy for reproducibility purposes! A few nuances regarding
+access patterns:
+
+-   there’s a 50000 record limit with one request, which means we have
+    to paginate using an offset parameter
+-   we get back lat/long coordinates as individual elements in a list;
+    when `jsonlite` parses the .json, it stores these values as a nested
+    dataframe column within the larger dataframe
+-   there’s some weird empty records that we have to catch
+
+<!-- -->
+
+    # check how many total records so we can back into the number of requests we have to make
     records <- fromJSON(content(GET("https://data.sfgov.org/resource/g8m3-pdis.json?$select=count(ttxid)"), as="text"))[1,1]
     total_pages <- ceiling(as.integer(records)/50000)
+
     endpoint <- "https://data.sfgov.org/resource/g8m3-pdis.json"
 
+    # loop through the number of requests
     for (i in seq(c(1:total_pages))) {
+      # logic with offset is pretty straightforward; on page 1 the offset is 0, for page 2 we want our offset to start us at 50,001
       url <- paste0(endpoint, "?$limit=50000&$offset=", format((i-1)*50000, scientific = FALSE), "&$order=ttxid")
       print(url)
       df_temp <- fromJSON(content(GET(url, add_headers(`X-App-Token` = "AQrzpwEVnUYlmA22uZxnaqiVY")), as = "text"))
       
       if ("location" %in% colnames(df_temp)) {
+        # there's a nested df called location within our parsed dataframe; one of the columns is a nested list-wise column called coordinates, contain lat/long as individual elements within a list
         location_df <- 
           df_temp$location %>%
           mutate(
@@ -39,6 +89,7 @@ tags: research
         df_temp <- df_temp %>% mutate(lat = as.double(NA), long = as.double(NA), type = as.character(NA))  
       }
       
+      # bind everything together
       if (exists("business_df")) {
         business_df <- rbind.data.frame(business_df, df_temp)
       } else {
@@ -49,9 +100,21 @@ tags: research
     rm(df_temp)
     rm(location_df)
 
+    # save the rds so we don't have to rerun this everytime
     business_df %>% saveRDS("sf_business_data.rds")
 
     business_df <- readRDS("sf_business_data.rds")
+
+Really basic `Get to Know Your Data`. Looks like Food Services and
+Retail Trade are the NAIC codes we want for groceries. There’s a *lot*
+of business without a code; I did some quick checks and I don’t think
+there are any groceries in there, mostly apartments and things like
+that. One thing to note is that multiple businesses can be registered at
+the same address. For example, there’s a market in Laurel Heights that’s
+one record, but inside that market is a butcher store, coffee shop,
+cheese shop, etc. that all registered as separate businesses within same
+address. The “primary” market has a `Food Services` NAIC code, but all
+the secondary businesses have an `NA` code.
 
     business_df %>% 
       group_by(naic_code_description) %>%
@@ -226,6 +289,8 @@ tags: research
     ## 6        <NA>
 
     # "Food Services", "Retail Trade"
+
+Mostly SF based businesses, no surprise.
 
     business_df %>%
       filter(
